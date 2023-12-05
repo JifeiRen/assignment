@@ -1,0 +1,203 @@
+---
+title: "EC349 Assignment"
+author: "Jifei 2101439"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = 'C:/Users/Ren/OneDrive - University of Warwick/ec349/assigment/yelp_dataset')
+library(glmnet)
+library(ggplot2)
+library(tidyverse)
+library(tree)
+library(rpart)
+library(rpart.plot)
+library(jsonlite)
+library(tidytext)
+library(glue)
+library(stringr)
+library(sentimentr)
+library(dplyr)
+library(tm)
+```
+
+
+## Tabula statement
+
+We're part of an academic community at Warwick.
+Whether studying, teaching, or researching, we’re all taking part in an expert conversation which must meet standards of academic integrity. When we all meet these standards, we can take pride in our own academic achievements, as individuals and as an academic community.
+Academic integrity means committing to honesty in academic work, giving credit where we've used others' ideas and being proud of our own achievements.
+In submitting my work I confirm that:
+1. I have read the guidance on academic integrity provided in the Student Handbook and understand the University regulations in relation to Academic Integrity. I am aware of the potential consequences of Academic Misconduct.
+2. I declare that the work is all my own, except where I have stated otherwise.
+3. No substantial part(s) of the work submitted here has also been submitted by me in other credit bearing assessments courses of study (other than in certain cases of a resubmission of a piece of work), and I acknowledge that if this has been done this may lead to an appropriate sanction.
+4. Where a generative Artificial Intelligence such as ChatGPT has been used I confirm I have abided by both the University guidance and specific requirements as set out in the Student Handbook and the Assessment brief. I have clearly acknowledged the use of any generative Artificial Intelligence in my submission, my reasoning for using it and which generative AI (or AIs) I have used. Except where indicated the work is otherwise entirely my own.
+5. I understand that should this piece of work raise concerns requiring investigation in relation to any of points above, it is possible that other work I have submitted for assessment will be checked, even if marks (provisional or confirmed) have been published.
+6. Where a proof-reader, paid or unpaid was used, I confirm that the proofreader was made aware of and has complied with the University’s proofreading policy.
+7. I consent that my work may be submitted to Turnitin or other analytical technology. I understand the use of this service (or similar), along with other methods of maintaining the integrity of the academic process, will help the University uphold academic standards and assessment fairness.
+
+## Introduction
+
+This project will using data from Yelp to predict how users like different establishments. The collection comprises five distinct sets of data, containing almost seven million reviews for over 150,000 establishments, contributed by nearly two million consumers.The Data Science Methodology chosen for this project is Cross Industry Standard Process for Data Mining (CRISP-DM). This methodology defined the process of data analysis and independent of both the industry sector. The reason for choosing this methodology is as following. Firstly,the process is quite intuitive, and easy to understand. Secondly, the implementation of this methodology is flexible. With the project starts with substantial uncertainties, each iterative will enhance the understanding of the situation. CRISP-DM model includes six data mining stages, which are business understanding, data understanding, data preparation, modeling, evaluation and development. In this project, I will firstly define the problem and then read through all accessible variables and evaluate data quality. After that, Transform and normalize data as needed and split the data into training and testing sets. Then Select and apply appropriate models based on the nature of the problem and evaluate model performance using appropriate metrics.
+
+## Business analysis
+
+The goal for this project is to predict the amount of "stars" given by user i to business j with the data collected from the Yelp. Yelp Inc. is an American company that develops the Yelp.com website and the Yelp mobile app, which publishes crowd-sourced reviews about businesses. So the data about the review stars and other basic information about the users and restaurants should be found to make the prediction.
+
+## Data understanding
+
+With the given source, there are five data sets can be found, which are Data on the Businesses, Data on User Reviews, Data on User “Check-Ins”, Data on the Users, Data on User Tips.
+```{r}
+business_data <- stream_in(file("yelp_academic_dataset_business.json"),verbose=FALSE)
+checkin_data  <- stream_in(file("yelp_academic_dataset_checkin.json"),verbose=FALSE)
+tip_data  <- stream_in(file("yelp_academic_dataset_tip.json"),verbose=FALSE)
+load("yelp_review_small.Rda")
+load("yelp_user_small.Rda")
+```
+Data on business gives the basic information about the restaurants includes the id, location, average stars received, review count, and the attributes of the restaurant. The data on user reviews gives the information about the user and business id, the stars given and text of reviews.The data on the users gives information about the users include id, average stars given and the compliments received. Data on user “Check-Ins” gives the check in data of user and data on user tips gives the text of tips given by users. For the quality of data, it can be found that in the business data, there are many missing value in the attributes, so the attributes will give very limited help in the prediction.The compliment in user data also gives little information. All other data set shows high quality in data. However, considering the objective of this project, the data on User “Check-Ins” and data on User Tips will not be used in further analysis because this data set do not include information contributing to prediction.
+
+## Data preparation 
+
+```{r}
+df <- merge(user_data_small,review_data_small, by = "user_id", all = FALSE)
+df2 <- merge(df,business_data, by="business_id", all=FALSE)
+df2$stars.x <- factor(df2$stars.x, levels = c(1, 2, 3, 4, 5), labels = c("1", "2", "3", "4", "5"))
+```
+
+The Data on the Businesses, Data on User Reviews, and Data on the Users will be merged into one data set. During the process, the observations with missing value were dropped. The the stars of review was set to be categorical variable.
+
+```{r}
+set.seed(1)
+n <- nrow(df2)
+train_index <- sample(1:n, size = 0.7 * n, replace = FALSE)
+training_data <- df2[train_index, ]
+test_data <- df2[-train_index, ]
+```
+
+The the data set was divided into training set and test set. There are 195914 observations divided into training set and 83964 observations divided into test set.
+
+## Modeling
+
+Based on the objective of project, the Decision Tree is employed here to make the analysis.The primary objective is to divide the data according to its level of "informativeness", which means the highest decrease Missclasification Error Rate: = $1 − \mathop{max}\limits_k=p^m_k1$. The data can be best classified by splitting it based on the most influential variable, followed by the next most influential variable, and so on. The reasons for using decision are as following. Firstly, the decision can capture the non-linear relationship between variables. Secondly, decision trees provide the capability to manage missing values and outliers in the data, hence minimising the requirement for data preparation. Thirdly, the visualisation of decision trees facilitates comprehension and interpretation of the model.(Thomas et al.,2020)
+
+```{r}
+tree1 <- rpart(stars.x ~ review_count.x + useful.x + funny.x + cool.x + fans + average_stars + compliment_hot + compliment_more + 
+                 compliment_profile + compliment_cute + compliment_list + compliment_note + compliment_plain + compliment_cool +
+                 compliment_funny + compliment_writer + compliment_photos + useful.y + funny.y + cool.y+stars.y + review_count.y + is_open
+               , data = training_data,method = "class")
+rpart.plot(tree1)
+```
+
+From the graph, it can be seen that the tree only predict the outcome with 1 star, 2 stars and 5 stars. So the prediction from a classification tree can not be valid.
+
+## Data preparation 2
+
+```{r}
+df2$stars.x<- as.numeric(as.character(df2$stars.x))
+#split training data set and test data set
+set.seed(1)
+n <- nrow(df2)
+train_index <- sample(1:n, size = 0.7 * n, replace = FALSE)
+training_data <- df2[train_index, ]
+test_data <- df2[-train_index, ]
+```
+Since the classification tree can not perform well, the variable star.x now should be recognised as continuous variable in training and test data set and use the regression tree to predict.
+
+## Modeling 2
+
+The regression tree is aiming to minimise the sum of squared residuals(RSS).The decision tree will firstly find a feature X, and  Split regions in the form $R_1(j,s) = [X|X < s] and [R_2(j,s) = X|X ≥ s]$, then find which predictor split x lead to the largest reduction in RSS and repeat all steps with the remaining predictors. As the result of regression tree is continuous, the outcome of prediction will be rounded to fit with review star.
+```{r}
+tree1 <- rpart(stars.x ~ review_count.x + useful.x + funny.x + cool.x + fans + average_stars + compliment_hot + compliment_more + 
+                 compliment_profile + compliment_cute + compliment_list + compliment_note + compliment_plain + compliment_cool +
+                 compliment_funny + compliment_writer + compliment_photos + useful.y + funny.y + cool.y + latitude + longitude +
+                 stars.y + review_count.y + is_open
+               , data = training_data)
+rpart.plot(tree1)
+```
+
+## Evaluation
+
+In this part, the confusion matrix and the accuracy of prediction will be showed to evaluate the performance of both tranining and test data set.
+```{r}
+predictions1<-predict(tree1,newdata = training_data)
+rounded_predictions1 <- round(predictions1)
+conf_matrix <- table(rounded_predictions1, training_data$stars.x)
+print(conf_matrix)
+accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
+print(paste("Accuracy:", accuracy))
+```
+```{r}
+predictions2<-predict(tree1,newdata = test_data)
+rounded_predictions2 <- round(predictions2)
+conf_matrix <- table(rounded_predictions2, test_data$stars.x)
+print(conf_matrix)
+accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
+print(paste("Accuracy:", accuracy))
+
+```
+It can be seen that the accuracy for prediction with training data is 0.400, and the accuracy for prediction with test data is 0.399. With close accuracy in prediction with both data set, there is no concerning with overfitting. However, the 0.4 accuracy might be insufficient in predict. Considering that the variable review text also include a wealth of information, it should be used to contribute the prediction.
+
+## Data preparation 3
+
+The sentiment analysis will be employed here to analysis the text. Sentiment refers to the assessment of words that is conveyed either positively or negatively. Sentiment analysis is commonly used to automatically determine the polarity (positive or negative) of internet reviews on the examined item. (Taboada, 2016) Here we used the data set combined Jocker & Rinker's  augmented  positive/negative word list as sentiment lookup values. 
+```{r}
+dict <- lexicon::hash_sentiment_jockers_rinker
+sentiment_score<-sentiment(df2$text)
+sum_sentiment<-sentiment_score %>%
+  group_by(element_id) %>%
+  summarise(sentiment = sum(sentiment))
+df2<-df2 %>%
+  mutate(element_id = row_number())
+DATA<-merge(df2,sum_sentiment,by="element_id",all=TRUE)
+
+```
+```{r}
+#splite the new data
+training_data2 <- DATA[train_index, ]
+test_data2 <- DATA[-train_index, ]
+```
+
+## Modeling 3
+
+The new variable sentiment now can be added into the regression tree.
+```{r}
+tree2 <- rpart(stars.x ~ review_count.x + useful.x + funny.x + cool.x + fans + average_stars + compliment_hot + compliment_more + 
+                 compliment_profile + compliment_cute + compliment_list + compliment_note + compliment_plain + compliment_cool +
+                 compliment_funny + compliment_writer + compliment_photos + useful.y + funny.y + cool.y+stars.y + review_count.y + is_open+sentiment
+               , data = training_data2)
+rpart.plot(tree2)
+
+```
+
+## Evaluation2
+
+```{r}
+predictions2<-predict(tree2,newdata = training_data2)
+rounded_predictions2 <- round(predictions2)
+conf_matrix <- table(rounded_predictions2, training_data2$stars.x)
+print(conf_matrix)
+accuracy2 <- sum(diag(conf_matrix)) / sum(conf_matrix)
+print(paste("Accuracy:", accuracy2))
+
+
+```
+```{r}
+predictions2<-predict(tree2,newdata = test_data2)
+rounded_predictions2 <- round(predictions2)
+conf_matrix <- table(rounded_predictions2, test_data2$stars.x)
+print(conf_matrix)
+accuracy2 <- sum(diag(conf_matrix)) / sum(conf_matrix)
+print(paste("Accuracy:", accuracy2))
+
+```
+It can be seen that there still no issue of overfitting, However, the inclusion of variable sentiment decreased the prediction accuracy from 0.4 to 0.26. The results shows that the regression tree without sentiment analysis performe more well in predicting the stars given by user to business.
+
+## Challenges
+
+Throughout the procedure, the substantial data set caused the execution of some programmes to endure a prolonged duration. For instance, during the initial run of the sentiment analysis, it was unable to complete overnight, and the prolonged duration caused me to feel apprehensive about the outcome. In order to address this issue, I dedicated a significant amount of time to researching various approaches of conducting sentiment analysis. Additionally, a significant amount of work was dedicated to data cleansing in order to enhance the code's efficiency. By dedicating myself to these two activities, I ultimately discovered a faster and more effective approach of conducting sentiment analysis.
+
+## Reference
+
+Taboada, M. (2016). Sentiment analysis: An overview from linguistics. Annual Review of Linguistics, 2, 325-347.
+
+Thomas, Tony and P. Vijayaraghavan, Athira and Emmanuel, Sabu and Thomas, Tony and P. Vijayaraghavan, Athira and Emmanuel, Sabu.(2020)'Applications of decision trees', Machine learning approaches in cyber security analytics, pp.157--184.
